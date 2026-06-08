@@ -1,0 +1,163 @@
+#define BLYNK_TEMPLATE_ID "TMPL3HhbF-mKf"
+#define BLYNK_TEMPLATE_NAME "EV Charging System"
+#define BLYNK_AUTH_TOKEN "Qq0d8xjR0St5C0NEujQoSYiPkzbGPnE6"
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+
+char ssid[] = "Monster";
+char pass[] = "11112222";
+
+BlynkTimer timer;
+
+// ---------------- PIN CONFIG ----------------
+
+#define RELAY_PIN 23
+#define BUZZER_PIN 25
+
+#define GREEN_LED 14
+#define RED_LED 27
+#define YELLOW_LED 26
+
+#define IR_PIN 18
+#define LDR_ANALOG 34   // A0
+#define LDR_DIGITAL 33  // D0
+#define VOLTAGE_PIN 32
+#define CURRENT_PIN 35
+
+// ---------------- VARIABLES ----------------
+
+float voltage = 0;
+float current = 0;
+float power = 0;
+int ldrValue = 0;
+bool vehicleDetected = false;
+bool manualControl = false;
+
+// ---------------- SENSOR FUNCTION ----------------
+
+void readSensors()
+{
+  int vRaw = analogRead(VOLTAGE_PIN);
+  int cRaw = analogRead(CURRENT_PIN);
+
+  voltage = (vRaw * 3.3 / 4095.0) * 4.0;
+  current = (cRaw * 3.3 / 4095.0) * 2.0;
+  power = voltage * current;
+
+  ldrValue = analogRead(LDR_ANALOG);
+  vehicleDetected = (digitalRead(IR_PIN) == LOW);
+
+  // Debug output
+  Serial.print("Voltage: "); Serial.print(voltage);
+  Serial.print(" | Current: "); Serial.print(current);
+  Serial.print(" | LDR: "); Serial.print(ldrValue);
+  Serial.print(" | Vehicle: "); Serial.println(vehicleDetected);
+
+  // Send to Blynk
+  Blynk.virtualWrite(V0, voltage);
+  Blynk.virtualWrite(V1, current);
+  Blynk.virtualWrite(V2, power);
+  Blynk.virtualWrite(V3, ldrValue);
+  Blynk.virtualWrite(V4, vehicleDetected);
+}
+
+// ---------------- AI LOGIC ----------------
+
+void smartControl()
+{
+  if(!manualControl)
+  {
+    if(vehicleDetected && voltage > 3.5)
+    {
+      digitalWrite(RELAY_PIN, HIGH);
+      digitalWrite(GREEN_LED, HIGH);
+      digitalWrite(RED_LED, LOW);
+    }
+    else
+    {
+      digitalWrite(RELAY_PIN, LOW);
+      digitalWrite(GREEN_LED, LOW);
+      digitalWrite(RED_LED, HIGH);
+    }
+
+    // Low battery alert
+    if(voltage < 3.5)
+    {
+      digitalWrite(YELLOW_LED, HIGH);
+      digitalWrite(BUZZER_PIN, HIGH);
+    }
+    else
+    {
+      digitalWrite(YELLOW_LED, LOW);
+      digitalWrite(BUZZER_PIN, LOW);
+    }
+  }
+}
+
+// ---------------- MANUAL CONTROL ----------------
+
+BLYNK_WRITE(V5)
+{
+  int value = param.asInt();
+
+  if(value == 1)
+  {
+    manualControl = true;
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(GREEN_LED, HIGH);
+    digitalWrite(RED_LED, LOW);
+  }
+  else
+  {
+    manualControl = false; // return to AI mode
+    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(RED_LED, HIGH);
+  }
+}
+
+// ---------------- SETUP ----------------
+
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(YELLOW_LED, OUTPUT);
+
+  pinMode(IR_PIN, INPUT);
+  pinMode(LDR_DIGITAL, INPUT);
+
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, pass);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi Connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  timer.setInterval(1000L, []() {
+    readSensors();
+    smartControl();
+  });
+}
+
+// ---------------- LOOP ----------------
+
+void loop()
+{
+  Blynk.run();
+  timer.run();
+}
